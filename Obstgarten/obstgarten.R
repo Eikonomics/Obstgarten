@@ -1,13 +1,20 @@
-# Basic set-up
+# 1. Basic set-up ----
 library(tidyverse)
+library(ggplot2)
 
-rm(list = ls())
+rm(list = ls()) # clean the house 
+SEED = 1023 # set seed for replication
 
-# Function so that I can leisurely simmulate games
+# How many simulations and bootstraps to do
+NUMBER_OF_GAMES_TO_PLAY = 199 # Generate # games
+NUMBER_OF_GAMES_TO_RE_SAMPLE = 100 # EACH ROUND OF GAMES ABOVE i DRAW # OF GAMES FROM TO RE-SAMPLE 
+NUMBER_OF_TIMES_RESAMPLE = 100 # re-sample the games # times AND AVERAGE THAT TO GET A DISTRIBUTION
+
+# 2. A Function to simmulate games ----
 obstgarten_simmulation_function <- function(STRATEGY = c("toddler", "parent"),
                                             RABEN_STEPS = 5,
-                                            N_GAMES = 99,
-                                            SEED = sample(1:1000,1)) {
+                                            N_GAMES = 999,
+                                            SEED = NULL) {
   set.seed(SEED)
   
   # set player behaviour
@@ -200,39 +207,101 @@ obstgarten_simmulation_function <- function(STRATEGY = c("toddler", "parent"),
   
 }
 
+# 3. Analysis ----
+# 3.1 just calculate the probability of winning the game by strategy 
+
+# Calculate the probabilities by playing 1m games with each strategy (total 2m games)
+simple_probs <- 
+  map_df(c("toddler", "parent"), 
+         obstgarten_simmulation_function, 
+         RABEN_STEPS = 5, 
+         N_GAMES = NUMBER_OF_GAMES_TO_RE_SAMPLE * NUMBER_OF_TIMES_RESAMPLE, 
+         .id = "scenario")
+
+# do the math
+simple_probs %>% 
+  filter(!is.na(game_over)) %>%
+  group_by(scenario, game_over) %>%
+  summarise(n = n(),
+            roll_n = mean(roll_n)) %>%
+  mutate(pr_loose = sum(game_over * n) / sum(n)) %>%
+  filter(game_over == 0)
+
+
+single_scenario <- 
+  obstgarten_simmulation_function(STRATEGY =  "parent", 
+                                  N_GAMES = 999, 
+                                  RABEN_STEPS = 5,
+                                  SEED = 1023)
+
+bootstra_data <-
+map_df(.f = obstgarten_simmulation_function, .x =  c("toddler", "parent"), 
+                                N_GAMES = 999, 
+                                RABEN_STEPS = 5,
+                                SEED = NULL, .id = "scenario")
+
+# Bootstrap function
+bootstrap_fun <- function(NUMBER_OF_ROUNDS = 1, SAMPLE_SIZE = 100) {
+  bootstra_data %>%
+    ungroup() %>%  
+    filter(!is.na(game_over)) %>%
+    group_by(scenario) %>%
+    sample_n(size = SAMPLE_SIZE) %>%
+    group_by(game_over, scenario) %>%
+    summarise(n = n(),
+              roll_n = mean(roll_n)) %>%
+    group_by(scenario) %>%
+    mutate(pr_loose = sum(game_over * n) / sum(n)) %>%
+    mutate(round = NUMBER_OF_ROUNDS) 
+}
+
+
+bootstrap_results <- map_df(.x = c(1:10000), .f = bootstrap_fun, SAMPLE_SIZE = 100)
+#bootstrap_results_parent <- map_df(.x = c(1:100), .f = bootstrap_fun, SAMPLE_SIZE = 50)
+
+bootstrap_results %>%
+  filter(game_over == 0) %>%
+  ggplot() +
+  aes(x = 1 - pr_loose, fill = as.factor(scenario), color = as.factor(scenario)) + 
+  geom_density(alpha = 0.5) 
+
+bootstrap_results %>%
+  filter(game_over == 0) %>%
+  group_by(scenario) %>%
+  ggplot() +
+  aes(x = pr_loose, fill = as.factor(scenario), color = as.factor(scenario)) + 
+  geom_histogram(bins = 40, alpha = 0.7)   
+  facet_wrap(~scenario)
+
+  bootstrap_results %>%
+    filter(game_over == 0) %>%
+    group_by(scenario) %>%
+    summarise(mean_pr_loose = mean(pr_loose))
+
 
 # Function for estimating a single scenario
 single_scenario <- 
   obstgarten_simmulation_function(STRATEGY =  "toddler", 
-                                  N_GAMES = 99, 
+                                  N_GAMES = 999, 
                                   RABEN_STEPS = 5,
                                   SEED = 1023)
 # example of probabilites
 single_scenario %>%
   filter(!is.na(game_over)) %>%
-  group_by(round_j) %>%
-  slice(1)  %>%
   group_by(game_over) %>% 
   summarise(n = n(),
             roll_n = mean(roll_n)) %>%
   mutate(pr_loose = sum(game_over * n) / sum(n))
 
-# Function, but run it over both strategies
-both_scenarios <- 
-  map_df(c("toddler", "parent"), 
-         obstgarten_simmulation_function, 
-         RABEN_STEPS = 5, 
-         N_GAMES = 99, 
-         .id = "scenario")
+# need to fix
+single_scenario %>%
+  mutate_at((vars(red_apples:pears)), .funs =  list(lag = ~lag(.))) %>%
+  mutate(red_apples_lag = red_apples / red_apples_lag) %>%
+  mutate(green_apples_lag = green_apples  / green_apples_lag ) %>%
+  mutate(plums_lag = plums  / plums_lag) %>%
+  mutate(pears_lag = pears  / pears_lag) %>%
+  select(roll_i, joker, red_apples:pears, red_apples_lag:pears_lag) %>% print(n = 60)
 
-# Claculate probabilites
-both_scenarios %>% 
-  filter(!is.na(game_over)) %>%
-  group_by(round_j, scenario) %>%
-  slice(1)  %>%
-  group_by(scenario, game_over) %>%
-  summarise(n = n(),
-            roll_n = mean(roll_n)) %>%
-  mutate(pr_loose = sum(game_over * n) / sum(n))
+
 
 
